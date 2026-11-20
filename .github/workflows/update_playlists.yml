@@ -1,0 +1,39 @@
+name: PB Plex IPTV Auto Update
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-scripts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Run Playlist Scripts
+        run: |
+          python Scripts/toffee_playlist.py
+          python Scripts/roarzone.py
+          python Scripts/jio_hotstar.py
+
+      - name: Commit and Push Playlists
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Toffee.m3u RoarZone.m3u
+          git diff --cached --quiet || git commit -m "Auto update IPTV playlists"
+          git push
