@@ -1,20 +1,19 @@
-name: AynaOTT Auto Update
+name: PB Plex IPTV Auto Update
 
 on:
   schedule:
     - cron: '0 */12 * * *'
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: write
 
 jobs:
-  run-scraper:
+  run-scripts:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Public Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -25,25 +24,16 @@ jobs:
       - name: Install Dependencies
         run: pip install requests
 
-      - name: Fetch Python Script
-        env:
-          REPO_NAME: ${{ secrets.SECRET_REPO_NAME }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+      - name: Run Playlist Scripts
         run: |
-          git clone https://x-access-token:${GH_PAT}@github.com/sm-monirulislam/${REPO_NAME}.git private_code
-          cp private_code/scripts/aynaott_sm.py .
-          rm -rf private_code
+          python Scripts/toffee_playlist.py || true
+          python Scripts/roarzone.py || true
+          python Scripts/jio_hotstar.py || true
 
-      - name: Run Scraper Script
-        run: python aynaott_sm.py
-
-      - name: Remove Python Script
-        run: rm -f aynaott_sm.py
-
-      - name: Commit and Push Files
+      - name: Commit and Push Playlists
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add aynaott.m3u aynaott_data.json
-          git diff --cached --quiet || git commit -m "Update AynaOTT playlist & JSON"
+          git add -A
+          git diff --cached --quiet || git commit -m "Auto update IPTV playlists"
           git push
