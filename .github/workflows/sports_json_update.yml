@@ -1,4 +1,4 @@
-name: Sports Data Playlist Auto Update
+name: Sports JSON Auto Update
 
 on:
   schedule:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  update-sports-data:
+  update-sports-json:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,13 +24,13 @@ jobs:
       - name: Install Dependencies
         run: pip install requests
 
-      - name: Run Sports Data Script
-        run: python Scripts/sports_data_playlist.py
+      - name: Run Sports JSON Script
+        run: python Scripts/sports_json_sync.py
 
-      - name: Commit and Push Sports_Live.m3u
+      - name: Commit and Push Sports_data.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sports_Live.m3u
-          git diff --cached --quiet || git commit -m "Auto update Sports_Live.m3u"
+          git add Sports_data.json
+          git diff --cached --quiet || git commit -m "Auto update Sports_data.json"
           git push
