@@ -1,12 +1,39 @@
 import requests
 
-API_URL = "https://raw.githubusercontent.com/sm-monirulislam/RoarZone-Auto-Update-playlist/refs/heads/main/RoarZone.m3u"
+CANDIDATE_URLS = [
+    "https://raw.githubusercontent.com/sm-monirulislam/RoarZone-Auto-Update-playlist/refs/heads/main/RoarZone.m3u",
+    "https://raw.githubusercontent.com/sm-monirulislam/RoarZone-Auto-Update-playlist/main/RoarZone.m3u",
+]
+
 OUTPUT_FILE = "RoarZone.m3u"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-response = requests.get(API_URL, timeout=30)
-response.raise_for_status()
+def sync_roarzone():
+    content = None
+    last_error = None
 
-with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-    f.write(response.text)
+    for url in CANDIDATE_URLS:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=30)
+            resp.raise_for_status()
+            text = resp.text.strip()
+            if text:
+                content = resp.text
+                print(f"Fetched successfully from: {url}")
+                break
+        except Exception as exc:
+            last_error = exc
+            print(f"Failed URL ({url}): {exc}")
 
-print(f"Updated {OUTPUT_FILE}")
+    if not content:
+        raise RuntimeError(f"Could not fetch RoarZone playlist. Last error: {last_error}")
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write(content if content.endswith("\n") else content + "\n")
+
+    print(f"Updated {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    sync_roarzone()
