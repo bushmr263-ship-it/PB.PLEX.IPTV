@@ -1,94 +1,57 @@
+from datetime import datetime, timezone, timedelta
+import re
 import requests
-from datetime import datetime
 
-# ==============================
-# CONFIG
-# ==============================
-API_URL = "https://raw.githubusercontent.com/sm-monirulislam/Toffee-Auto-Update/refs/heads/main/toffee_data.json"
+SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/Toffee-Auto-Update/refs/heads/main/toffee_playlist.m3u"
 OUTPUT_FILE = "Toffee.m3u"
 
-# ==============================
-# FETCH API
-# ==============================
-try:
-    response = requests.get(API_URL, timeout=30)
-    response.raise_for_status()
-    data = response.json()
-except Exception as e:
-    print(f"API Error: {e}")
-    exit()
+def build_playlist():
+    resp = requests.get(SOURCE_URL, timeout=20)
+    resp.raise_for_status()
+    lines = resp.text.splitlines()
 
-channels = data.get("response", [])
+    entries = []
+    current_extinf = None
 
-if not channels:
-    print("No channel data found.")
-    exit()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF:"):
+            current_extinf = line
+        elif not line.startswith("#") and current_extinf:
+            # চ্যানেলের নাম বের করা (কমার পরের অংশ)
+            name = current_extinf.split(",")[-1].strip() if "," in current_extinf else "Toffee Channel"
+            logo_match = re.search(r'tvg-logo="([^"]*)"', current_extinf)
+            group_match = re.search(r'group-title="([^"]*)"', current_extinf)
 
-# ==============================
-# CREATE PLAYLIST
-# ==============================
-lines = [
-    "#EXTM3U",
-    f"# Toffee Live Channels",
-    f"# Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-    ""
-]
+            logo = logo_match.group(1) if logo_match else ""
+            group = group_match.group(1) if group_match else "Toffee"
 
-for channel in channels:
-    name = channel.get("name", "Unknown")
-    link = channel.get("link", "")
-    logo = channel.get("logo", "")
-    category = channel.get("category_name", "Toffee")
+            extinf = f'#EXTINF:-1 tvg-name="{name}" tvg-logo="{logo}" group-title="{group}",{name}'
+            entries.append((extinf, line))
+            current_extinf = None
 
-    headers = channel.get("headers", {})
+    if not entries:
+        raise ValueError("No stream entries found from source playlist.")
 
-    if not link:
-        continue
+    bd_time = datetime.now(timezone(timedelta(hours=6))).strftime("%Y-%m-%d %H:%M:%S")
+    out_lines = [
+        "#EXTM3U",
+        "# Toffee Live Channels (Auto Synced)",
+        f"# Last Updated: {bd_time}",
+        ""
+    ]
 
-    # EXTINF
-    lines.append(
-        f'#EXTINF:-1 tvg-name="{name}" '
-        f'tvg-logo="{logo}" '
-        f'group-title="{category}",{name}'
-    )
+    for extinf, url in entries:
+        out_lines.append(extinf)
+        out_lines.append(url)
+        out_lines.append("")
 
-    # HLS headers
-    if headers:
-        header_parts = []
-
-        for key, value in headers.items():
-            if value is None:
-                continue
-
-            value = str(value)
-
-            # Escape characters used by KODIPROP syntax
-            value = value.replace("&", "%26")
-            value = value.replace("=", "%3D")
-
-            header_parts.append(f"{key}={value}")
-
-        if header_parts:
-            lines.append(
-                "#KODIPROP:inputstream.adaptive.stream_headers="
-                + "&".join(header_parts)
-            )
-
-    lines.append(link)
-    lines.append("")
-
-# ==============================
-# SAVE FILE
-# ==============================
-try:
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write("\n".join(out_lines).strip() + "\n")
 
-    print("=" * 40)
-    print("Playlist created successfully!")
-    print(f"File   : {OUTPUT_FILE}")
-    print(f"Channels: {len(channels)}")
-    print("=" * 40)
+    print(f"Updated {OUTPUT_FILE} with {len(entries)} channels at {bd_time}")
 
-except Exception as e:
-    print(f"File Error: {e}")
+if __name__ == "__main__":
+    build_playlist()
