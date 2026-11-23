@@ -1,12 +1,26 @@
 from datetime import datetime, timezone, timedelta
-import re
+import json
+import os
 import requests
 
-SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/Tapmad_Auto_Update_Playlist/refs/heads/main/tapmad_sm.m3u"
-OUTPUT_FILE = "Tapmad.m3u"
+M3U_SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/Tapmad_Auto_Update_Playlist/refs/heads/main/tapmad_sm.m3u"
+JSON_SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/Tapmad_Auto_Update_Playlist/refs/heads/main/tapmad_data.json"
 
-def build_tapmad_playlist():
-    resp = requests.get(SOURCE_URL, timeout=20)
+M3U_OUTPUT_FILE = "Tapmad.m3u"
+JSON_OUTPUT_FILE = "Tapmad_data.json"
+
+OWNER_NAME = "Shawon"
+TELEGRAM_LINK = "https://t.me/+VqDOF_-beaQyMWY1"
+
+
+def clean_escaped_url(val):
+    if not isinstance(val, str):
+        return ""
+    return val.replace("\\/", "/").strip()
+
+
+def build_from_m3u(bd_time):
+    resp = requests.get(M3U_SOURCE_URL, timeout=25)
     resp.raise_for_status()
     lines = resp.text.splitlines()
 
@@ -20,28 +34,21 @@ def build_tapmad_playlist():
         if line.startswith("#EXTINF:"):
             current_extinf = line
         elif not line.startswith("#") and current_extinf:
-            ch_title = current_extinf.split(",")[-1].strip() if "," in current_extinf else "Tapmad Football"
-            tvg_id_match = re.search(r'tvg-id="([^"]*)"', current_extinf)
-            logo_match = re.search(r'tvg-logo="([^"]*)"', current_extinf)
-            group_match = re.search(r'group-title="([^"]*)"', current_extinf)
-
-            tvg_id = tvg_id_match.group(1) if tvg_id_match else ""
-            logo = logo_match.group(1) if logo_match else ""
-            group = group_match.group(1) if group_match else "Football"
-
-            extinf = f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-logo="{logo}" group-title="{group}",{ch_title}'
-            entries.append((extinf, line))
+            entries.append((current_extinf, line))
             current_extinf = None
 
     if not entries:
-        raise ValueError("No Tapmad stream entries found.")
+        return None, 0
 
-    bd_time = datetime.now(timezone(timedelta(hours=6))).strftime("%Y-%m-%d %H:%M:%S")
     out_lines = [
         "#EXTM3U",
-        "# Tapmad Football Streams (Auto Synced)",
-        f"# Last Updated: {bd_time}",
-        ""
+        "# ==========================================",
+        f"# Developed by: {OWNER_NAME}",
+        f"# Telegram: {TELEGRAM_LINK}",
+        f"# Last Updated: {bd_time} (BD Time)",
+        f"# Channels Count: {len(entries)}",
+        "# ==========================================",
+        "",
     ]
 
     for extinf, url in entries:
@@ -49,10 +56,60 @@ def build_tapmad_playlist():
         out_lines.append(url)
         out_lines.append("")
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(out_lines).strip() + "\n")
+    return "\n".join(out_lines).strip() + "\n", len(entries)
 
-    print(f"Updated {OUTPUT_FILE} with {len(entries)} channels at {bd_time}")
+
+def update_tapmad():
+    bd_now = datetime.now(timezone(timedelta(hours=6)))
+    bd_time = bd_now.strftime("%Y-%m-%d %H:%M:%S")
+    json_time = bd_now.strftime("%I:%M:%S %p %d-%m-%Y")
+
+    # 1. JSON ডেটা ফেচ ও আপডেট
+    try:
+        j_resp = requests.get(JSON_SOURCE_URL, timeout=25)
+        j_resp.raise_for_status()
+        j_data = j_resp.json()
+        if isinstance(j_data, dict):
+            j_data["owner"] = OWNER_NAME
+            j_data["telegram_channel"] = TELEGRAM_LINK
+            j_data["last_update_time"] = json_time
+            matches = j_data.get("matches", [])
+            if isinstance(matches, list):
+                for m in matches:
+                    if isinstance(m, dict):
+                        for field in ("thumbnail", "tv_image", "stream_url", "play_url", "url"):
+                            if field in m and isinstance(m[field], str):
+                                m[field] = clean_escaped_url(m[field])
+            with open(JSON_OUTPUT_FILE, "w", encoding="utf-8") as jf:
+                json.dump(j_data, jf, indent=2, ensure_ascii=False)
+            print(f"Updated {JSON_OUTPUT_FILE} at {bd_time}")
+    except Exception as e:
+        print(f"Warning while updating {JSON_OUTPUT_FILE}: {e}")
+
+    # 2. M3U প্লেলিস্ট আপডেট
+    m3u_content, count = build_from_m3u(bd_time)
+    if not m3u_content or count == 0:
+        print(f"No Tapmad stream entries found at {bd_time}. Skipping overwrite to keep workflow clean.")
+        if not os.path.exists(M3U_OUTPUT_FILE):
+            header_only = [
+                "#EXTM3U",
+                "# ==========================================",
+                f"# Developed by: {OWNER_NAME}",
+                f"# Telegram: {TELEGRAM_LINK}",
+                f"# Last Updated: {bd_time} (BD Time)",
+                "# Channels Count: 0",
+                "# ==========================================",
+                "",
+            ]
+            with open(M3U_OUTPUT_FILE, "w", encoding="utf-8") as mf:
+                mf.write("\n".join(header_only))
+        return
+
+    with open(M3U_OUTPUT_FILE, "w", encoding="utf-8") as mf:
+        mf.write(m3u_content)
+
+    print(f"Updated {M3U_OUTPUT_FILE} with {count} channels at {bd_time}")
+
 
 if __name__ == "__main__":
-    build_tapmad_playlist()
+    update_tapmad()
