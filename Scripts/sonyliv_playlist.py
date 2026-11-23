@@ -1,27 +1,77 @@
 from datetime import datetime, timezone, timedelta
+import json
 import re
 import requests
 
-SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/SonyLiv_Event_Playlist/refs/heads/main/sonyLiv.m3u"
-OUTPUT_FILE = "SonyLiv.m3u"
+M3U_SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/SonyLiv_Event_Playlist/refs/heads/main/sonyLiv.m3u"
+JSON_SOURCE_URL = "https://raw.githubusercontent.com/sm-monirulislam/SonyLiv_Event_Playlist/refs/heads/main/sonyLiv_data.json"
 
-# সব ভাষা রাখতে চাইলে [] ফাঁকা রাখুন; নির্দিষ্ট ভাষা চাইলে যেমন ["ENG", "HIN"] দিন
-ONLY_LANGUAGES = []
+M3U_OUTPUT_FILE = "SonyLiv.m3u"
+JSON_OUTPUT_FILE = "SonyLiv_data.json"
 
-def keep_entry(extinf: str) -> bool:
-    if not ONLY_LANGUAGES:
-        return True
-    upper_extinf = extinf.upper()
-    return any(f"[{lang.upper()}]" in upper_extinf for lang in ONLY_LANGUAGES)
+OWNER_NAME = "Shawon"
+TELEGRAM_LINK = "https://t.me/+VqDOF_-beaQyMWY1"
 
-def build_sonyliv_playlist():
-    resp = requests.get(SOURCE_URL, timeout=20)
+# শুধু LIVE ম্যাচ রাখতে True করুন; সব ম্যাচ রাখতে False রাখুন
+ONLY_LIVE = False
+
+
+def fetch_json_data():
+    resp = requests.get(JSON_SOURCE_URL, timeout=25)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def build_m3u_from_matches(matches, bd_time):
+    valid_items = []
+    for m in matches:
+        stream_link = str(m.get("stream_link") or "").strip()
+        if not stream_link:
+            continue
+        status = str(m.get("status") or "").strip().upper()
+        if ONLY_LIVE and status != "LIVE":
+            continue
+
+        title = str(m.get("match_name") or m.get("event_name") or "SonyLiv Event").strip()
+        lang = str(m.get("audioLanguageName") or "").strip()
+        if lang and f"[{lang}]" not in title:
+            title = f"{title} [{lang}]"
+
+        tvg_id = str(m.get("contentId") or "").strip()
+        logo = str(m.get("src") or "").strip()
+        group = str(m.get("event_category") or "Sports").strip()
+
+        extinf = (
+            f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-name="{title}" '
+            f'tvg-logo="{logo}" group-title="{group}",{title}'
+        )
+        valid_items.append((extinf, stream_link))
+
+    out_lines = [
+        "#EXTM3U",
+        "# ==========================================",
+        f"# Developed by: {OWNER_NAME}",
+        f"# Telegram: {TELEGRAM_LINK}",
+        f"# Last Updated: {bd_time} (BD Time)",
+        f"# Channels Count: {len(valid_items)}",
+        "# ==========================================",
+        "",
+    ]
+    for extinf, url in valid_items:
+        out_lines.append(extinf)
+        out_lines.append(url)
+        out_lines.append("")
+
+    return "\n".join(out_lines).strip() + "\n", len(valid_items)
+
+
+def build_m3u_fallback(bd_time):
+    resp = requests.get(M3U_SOURCE_URL, timeout=25)
     resp.raise_for_status()
     lines = resp.text.splitlines()
 
     entries = []
     current_extinf = None
-
     for raw_line in lines:
         line = raw_line.strip()
         if not line:
@@ -29,40 +79,62 @@ def build_sonyliv_playlist():
         if line.startswith("#EXTINF:"):
             current_extinf = line
         elif not line.startswith("#") and current_extinf:
-            if keep_entry(current_extinf):
-                name_match = re.search(r'tvg-name="([^"]*)"', current_extinf)
-                logo_match = re.search(r'tvg-logo="([^"]*)"', current_extinf)
-                group_match = re.search(r'group-title="([^"]*)"', current_extinf)
-
-                ch_title = current_extinf.split(",")[-1].strip() if "," in current_extinf else "SonyLiv Event"
-                tvg_name = name_match.group(1) if name_match else ch_title
-                logo = logo_match.group(1) if logo_match else ""
-                group = group_match.group(1) if group_match else "Cricket"
-
-                extinf = f'#EXTINF:-1 tvg-name="{tvg_name}" tvg-logo="{logo}" group-title="{group}",{ch_title}'
-                entries.append((extinf, line))
+            entries.append((current_extinf, line))
             current_extinf = None
 
-    if not entries:
-        raise ValueError("No SonyLiv stream entries found.")
-
-    bd_time = datetime.now(timezone(timedelta(hours=6))).strftime("%Y-%m-%d %H:%M:%S")
     out_lines = [
         "#EXTM3U",
-        "# SonyLiv Event Channels (Auto Synced)",
-        f"# Last Updated: {bd_time}",
-        ""
+        "# ==========================================",
+        f"# Developed by: {OWNER_NAME}",
+        f"# Telegram: {TELEGRAM_LINK}",
+        f"# Last Updated: {bd_time} (BD Time)",
+        f"# Channels Count: {len(entries)}",
+        "# ==========================================",
+        "",
     ]
-
     for extinf, url in entries:
         out_lines.append(extinf)
         out_lines.append(url)
         out_lines.append("")
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(out_lines).strip() + "\n")
+    return "\n".join(out_lines).strip() + "\n", len(entries)
 
-    print(f"Updated {OUTPUT_FILE} with {len(entries)} channels at {bd_time}")
+
+def run_sync():
+    bd_now = datetime.now(timezone(timedelta(hours=6)))
+    bd_time = bd_now.strftime("%Y-%m-%d %H:%M:%S")
+    json_time = bd_now.strftime("%I:%M:%S %p %d-%m-%Y")
+
+    data = fetch_json_data()
+    matches = data.get("matches", []) if isinstance(data, dict) else []
+
+    if isinstance(data, dict):
+        filtered_matches = matches
+        if ONLY_LIVE:
+            filtered_matches = [
+                m for m in matches if str(m.get("status") or "").strip().upper() == "LIVE"
+            ]
+        data["owner"] = OWNER_NAME
+        data["telegram"] = TELEGRAM_LINK
+        data["last_update_time"] = json_time
+        data["total_matches"] = len(filtered_matches)
+        data["live_match"] = sum(
+            1 for m in filtered_matches if str(m.get("status") or "").strip().upper() == "LIVE"
+        )
+        data["matches"] = filtered_matches
+
+        with open(JSON_OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+    m3u_content, count = build_m3u_from_matches(matches, bd_time)
+    if count == 0:
+        m3u_content, count = build_m3u_fallback(bd_time)
+
+    with open(M3U_OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write(m3u_content)
+
+    print(f"Updated {M3U_OUTPUT_FILE} ({count} active streams) and {JSON_OUTPUT_FILE} at {bd_time}")
+
 
 if __name__ == "__main__":
-    build_sonyliv_playlist()
+    run_sync()
